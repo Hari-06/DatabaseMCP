@@ -13,7 +13,6 @@ import logging
 from fastmcp import FastMCP
 
 from .config import DatabaseConfig
-from .tools import register_all
 
 logger = logging.getLogger("sqlserver-mcp.server")
 
