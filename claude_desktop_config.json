@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "sqlserver": {
+      "command": "python",
+      "args": ["path/to/server.py"],
+      "env": {
+        "MSSQL_SERVER": "your-server-host",
+        "MSSQL_PORT": "1433",
+        "MSSQL_DATABASE": "your-database",
+        "MSSQL_USER": "your-username",
+        "MSSQL_PASSWORD": "your-password",
+        "MSSQL_TRUST_CERT": "false",
+        "MSSQL_TIMEOUT": "30"
+      }
+    }
+  }
+}
