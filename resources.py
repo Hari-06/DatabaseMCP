@@ -18,7 +18,7 @@ from fastmcp import FastMCP
 # -----------------------------
 # 🔒 Basic identifier validation
 # -----------------------------
-_VALID_NAME = re.compile(r"^[A-Za-z0-9_\.\[\]]+$")
+_VALID_NAME = re.compile(r"^[A-Za-z0-9_.\[\]]+$")
 
 
 def _validate(name: str, field: str) -> str:
