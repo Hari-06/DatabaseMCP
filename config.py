@@ -1,5 +1,8 @@
 """
-config.py — Load and validate database connection settings from environment variables.
+config.py — Database connection settings.
+
+Loads all configuration from environment variables and exposes a
+DatabaseConfig dataclass used throughout the application.
 """
 
 import os
@@ -18,11 +21,14 @@ class DatabaseConfig:
 
     @classmethod
     def from_env(cls) -> "DatabaseConfig":
-        """Build config from environment variables, raising if required vars are missing."""
+        """Build a DatabaseConfig from environment variables.
+
+        Raises EnvironmentError if any required variable is missing.
+        """
         required = {
-            "MSSQL_SERVER": os.environ.get("MSSQL_SERVER", ""),
+            "MSSQL_SERVER":   os.environ.get("MSSQL_SERVER", ""),
             "MSSQL_DATABASE": os.environ.get("MSSQL_DATABASE", ""),
-            "MSSQL_USER": os.environ.get("MSSQL_USER", ""),
+            "MSSQL_USER":     os.environ.get("MSSQL_USER", ""),
             "MSSQL_PASSWORD": os.environ.get("MSSQL_PASSWORD", ""),
         }
         missing = [k for k, v in required.items() if not v]
@@ -37,11 +43,14 @@ class DatabaseConfig:
             username=required["MSSQL_USER"],
             password=required["MSSQL_PASSWORD"],
             port=int(os.environ.get("MSSQL_PORT", "1433")),
-            trust_server_certificate=os.environ.get("MSSQL_TRUST_CERT", "false").lower() == "true",
+            trust_server_certificate=(
+                os.environ.get("MSSQL_TRUST_CERT", "false").lower() == "true"
+            ),
             timeout=int(os.environ.get("MSSQL_TIMEOUT", "30")),
         )
 
     def to_connection_string(self) -> str:
+        """Build an ODBC connection string from this config."""
         conn_str = (
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
             f"SERVER={self.server},{self.port};"

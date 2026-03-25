@@ -1,6 +1,9 @@
 """
 __main__.py — Entry point.
-Run with:  python -m sqlserver_mcp
+
+Run with:
+    python -m sqlserver_mcp
+    sqlserver-mcp          (after pip install -e .)
 """
 
 import logging

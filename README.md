@@ -9,12 +9,21 @@ Write operations (INSERT, UPDATE, DELETE, DROP, etc.) are blocked at the applica
 sqlserver_mcp/
 ├── src/
 │   └── sqlserver_mcp/
-│       ├── __init__.py      # Package marker
-│       ├── __main__.py      # Entry point  (python -m sqlserver_mcp)
-│       ├── config.py        # DatabaseConfig dataclass, env-var loading
-│       ├── database.py      # Connection helper, read-only validator, rows_to_dict
-│       └── server.py        # FastMCP tools via @mcp.tool() decorators
-├── pyproject.toml           # Package metadata & dependencies
+│       ├── __init__.py          # Package marker
+│       ├── __main__.py          # Entry point (python -m sqlserver_mcp)
+│       ├── config.py            # DatabaseConfig dataclass & env-var loading
+│       ├── server.py            # FastMCP instance creation & startup
+│       ├── db/
+│       │   ├── __init__.py      # Re-exports connector + validator helpers
+│       │   ├── connector.py     # pyodbc connection factory & rows_to_dict
+│       │   └── validator.py     # Read-only query guard (blocked keywords)
+│       └── tools/
+│           ├── __init__.py      # register_all() — mounts every tool module
+│           ├── connection.py    # test_connection tool
+│           ├── query.py         # execute_query tool
+│           ├── schema.py        # list_tables + describe_table tools
+│           └── stats.py         # get_row_count tool
+├── pyproject.toml               # Package metadata & dependencies
 ├── claude_desktop_config.json
 └── README.md
 ```
