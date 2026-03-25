@@ -1,79 +1,193 @@
 """
-server.py — MCP server wiring.
-Registers tools and routes incoming tool calls to the appropriate handler.
+server.py — FastMCP server for SQL Server (read-only).
+
+Tools are registered with @mcp.tool() decorators.
+FastMCP auto-generates schemas from type hints and docstrings —
+no manual Tool definitions, no list_tools / call_tool wiring needed.
 """
 
-import json
 import logging
-from typing import Any
 
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from mcp.types import CallToolResult, ListToolsResult, TextContent
+from fastmcp import FastMCP
 
 from .config import DatabaseConfig
-from .handlers import (
-    handle_describe_table,
-    handle_execute_query,
-    handle_get_row_count,
-    handle_list_tables,
-    handle_test_connection,
+from .database import get_connection, rows_to_dict, validate_readonly
+
+logger = logging.getLogger("sqlserver-mcp")
+
+mcp = FastMCP(
+    name="sqlserver-mcp",
+    instructions=(
+        "Read-only MCP server for SQL Server. "
+        "Only SELECT and WITH queries are permitted. "
+        "All write operations (INSERT, UPDATE, DELETE, DROP, etc.) are blocked."
+    ),
 )
-from .tools import TOOLS
 
-logger = logging.getLogger("sqlserver-mcp.server")
-
-app = Server("sqlserver-mcp")
+# Module-level config — injected at startup via serve()
+_config: DatabaseConfig | None = None
 
 
-# ── serialisation helpers ─────────────────────────────────────────────────────
-
-def _to_result(data: dict) -> CallToolResult:
-    is_error = not data.pop("ok", True)
-    text = json.dumps(data, default=str, indent=2)
-    return CallToolResult(
-        isError=is_error,
-        content=[TextContent(type="text", text=text)],
-    )
+def _get_config() -> DatabaseConfig:
+    if _config is None:
+        raise RuntimeError("Server not initialised. Call serve() first.")
+    return _config
 
 
-# ── MCP handlers ──────────────────────────────────────────────────────────────
+# ── Tools ─────────────────────────────────────────────────────────────────────
 
-@app.list_tools()
-async def list_tools() -> ListToolsResult:
-    return ListToolsResult(tools=TOOLS)
-
-
-@app.call_tool()
-async def call_tool(name: str, arguments: dict[str, Any]) -> CallToolResult:
-    config: DatabaseConfig = app.state.db_config  # type: ignore[attr-defined]
-
+@mcp.tool()
+def test_connection() -> dict:
+    """Verify connectivity to SQL Server and return version information."""
+    config = _get_config()
+    conn = get_connection(config)
     try:
-        match name:
-            case "test_connection":
-                result = await handle_test_connection(config)
-            case "execute_query":
-                result = await handle_execute_query(config, arguments)
-            case "list_tables":
-                result = await handle_list_tables(config, arguments)
-            case "describe_table":
-                result = await handle_describe_table(config, arguments)
-            case "get_row_count":
-                result = await handle_get_row_count(config, arguments)
-            case _:
-                result = {"ok": False, "error": f"Unknown tool: '{name}'"}
-    except Exception as exc:
-        logger.exception("Unhandled error in tool '%s'", name)
-        result = {"ok": False, "error": str(exc)}
-
-    return _to_result(result)
+        cursor = conn.cursor()
+        cursor.execute("SELECT @@VERSION AS version, DB_NAME() AS db_name")
+        row = cursor.fetchone()
+        return {
+            "status": "connected",
+            "server": config.server,
+            "port": config.port,
+            "database": row[1],
+            "version": row[0].split("\n")[0].strip(),
+        }
+    finally:
+        conn.close()
 
 
-# ── startup ───────────────────────────────────────────────────────────────────
+@mcp.tool()
+def execute_query(query: str, params: list | None = None) -> dict:
+    """
+    Execute a read-only SELECT or WITH query and return the results as JSON.
 
-async def serve(config: DatabaseConfig) -> None:
-    """Start the MCP server on stdio."""
-    app.state.db_config = config  # type: ignore[attr-defined]
-    logger.info("SQL Server MCP server starting (db=%s@%s)", config.database, config.server)
-    async with stdio_server() as (read_stream, write_stream):
-        await app.run(read_stream, write_stream, app.create_initialization_options())
+    Args:
+        query:  A SELECT or WITH (CTE) SQL statement.
+        params: Optional list of positional parameters for parameterised queries.
+    """
+    query = query.strip()
+    error = validate_readonly(query)
+    if error:
+        return {"error": error}
+
+    config = _get_config()
+    conn = get_connection(config)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
+        cursor.execute(query, params or [])
+        rows = rows_to_dict(cursor)
+        return {"row_count": len(rows), "rows": rows}
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+def list_tables(schema: str | None = None) -> dict:
+    """
+    List all user tables in the current database.
+
+    Args:
+        schema: Optional schema name to filter by (e.g. 'dbo').
+    """
+    config = _get_config()
+    sql = """
+        SELECT TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE
+        FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_TYPE = 'BASE TABLE'
+    """
+    sql_params: list = []
+    if schema:
+        sql += " AND TABLE_SCHEMA = ?"
+        sql_params.append(schema)
+    sql += " ORDER BY TABLE_SCHEMA, TABLE_NAME"
+
+    conn = get_connection(config)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(sql, sql_params)
+        tables = rows_to_dict(cursor)
+        return {"table_count": len(tables), "tables": tables}
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+def describe_table(table: str) -> dict:
+    """
+    Return column names, data types, nullability, and ordinal position for a table.
+
+    Args:
+        table: Table name, optionally schema-qualified (e.g. 'dbo.Customers').
+    """
+    parts = table.strip().split(".", 1)
+    schema, tbl = (parts[0], parts[1]) if len(parts) == 2 else ("dbo", parts[0])
+
+    config = _get_config()
+    conn = get_connection(config)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                COLUMN_NAME,
+                DATA_TYPE,
+                CHARACTER_MAXIMUM_LENGTH,
+                IS_NULLABLE,
+                COLUMN_DEFAULT,
+                ORDINAL_POSITION
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+            ORDER BY ORDINAL_POSITION
+            """,
+            [schema, tbl],
+        )
+        columns = rows_to_dict(cursor)
+        if not columns:
+            return {"error": f"Table '{schema}.{tbl}' not found or has no columns."}
+        return {"table": f"{schema}.{tbl}", "columns": columns}
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+def get_row_count(table: str) -> dict:
+    """
+    Return the approximate row count for a table using SQL Server system metadata.
+
+    Args:
+        table: Table name, optionally schema-qualified.
+    """
+    tbl_name = table.strip().split(".")[-1]
+    config = _get_config()
+    conn = get_connection(config)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT SUM(p.rows) AS row_count
+            FROM sys.tables t
+            JOIN sys.partitions p ON t.object_id = p.object_id
+            WHERE p.index_id IN (0, 1)
+              AND t.name = ?
+            """,
+            [tbl_name],
+        )
+        row = cursor.fetchone()
+        count = int(row[0]) if row and row[0] is not None else 0
+        return {"table": table, "row_count": count}
+    finally:
+        conn.close()
+
+
+# ── Startup ───────────────────────────────────────────────────────────────────
+
+def serve(config: DatabaseConfig) -> None:
+    """Inject config and start the MCP server on stdio."""
+    global _config
+    _config = config
+    logger.info(
+        "SQL Server MCP server starting (db=%s@%s:%s)",
+        config.database, config.server, config.port,
+    )
+    mcp.run()

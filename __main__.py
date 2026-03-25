@@ -3,7 +3,6 @@ __main__.py — Entry point.
 Run with:  python -m sqlserver_mcp
 """
 
-import asyncio
 import logging
 
 from .config import DatabaseConfig
@@ -17,7 +16,7 @@ logging.basicConfig(
 
 def main() -> None:
     config = DatabaseConfig.from_env()
-    asyncio.run(serve(config))
+    serve(config)
 
 
 if __name__ == "__main__":

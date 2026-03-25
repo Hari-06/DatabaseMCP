@@ -11,11 +11,9 @@ sqlserver_mcp/
 │   └── sqlserver_mcp/
 │       ├── __init__.py      # Package marker
 │       ├── __main__.py      # Entry point  (python -m sqlserver_mcp)
-│       ├── config.py        # Env-var config & connection string builder
-│       ├── database.py      # Connection helpers & read-only validator
-│       ├── handlers.py      # Business logic for each tool
-│       ├── server.py        # MCP wiring (list_tools / call_tool)
-│       └── tools.py         # Tool schema definitions
+│       ├── config.py        # DatabaseConfig dataclass, env-var loading
+│       ├── database.py      # Connection helper, read-only validator, rows_to_dict
+│       └── server.py        # FastMCP tools via @mcp.tool() decorators
 ├── pyproject.toml           # Package metadata & dependencies
 ├── claude_desktop_config.json
 └── README.md
